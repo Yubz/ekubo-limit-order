@@ -1,59 +1,57 @@
 use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait};
 use ekubo::interfaces::positions::{IPositionsDispatcher, IPositionsDispatcherTrait};
-use ekubo::types::keys::{PoolKey, PositionKey};
+use ekubo::types::keys::{PositionKey, PoolKey};
+use ekubo::types::bounds::{Bounds};
 use ekubo::types::i129::{i129};
 use core::traits::{TryInto, Into};
 use core::option::{OptionTrait};
 use starknet::ContractAddress;
-
-#[derive(Copy, Drop, starknet::Store)]
-struct LimitOrderInfo {
-    position_id: u64,
-    owner: ContractAddress,
-    tick: i129
-}
+use alexandria_storage::list::{List, ListTrait};
 
 #[starknet::interface]
-pub trait ILimitOrder<TStorage> {
-    // Set a limit order at a given tick 
-    fn set_limit_order(self: @TStorage, pool_key: PoolKey, tick: i129, amount: u128);
+trait IEkuboLimitOrder<TContractState> {
+    // Get limit orders of caller address
+    fn get_limit_orders(self: @TContractState) -> Array<u64>;
+
+    // Set a limit order 
+    fn set_limit_order(ref self: TContractState, pool_key: PoolKey, bounds: Bounds, min_liquidity: u128);
 }
 
 #[starknet::contract]
 mod LimitOrder {
-    use super::{ILimitOrder, PoolKey, PositionKey, LimitOrderInfo, i129};
+    use core::result::ResultTrait;
+    use super::{IEkuboLimitOrder, PositionKey, PoolKey, i129, TryInto, Into, List, ListTrait, Bounds};
+    use core::array::{Array, ArrayTrait};
     use ekubo::types::call_points::{CallPoints};
     use ekubo::types::delta::{Delta};
     use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait, IExtension, SwapParameters, UpdatePositionParameters};
     use ekubo::interfaces::positions::{IPositionsDispatcher, IPositionsDispatcherTrait};
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
-    use alexandria_storage::list::List;
-
+    
     #[storage]
     struct Storage {
         core: ICoreDispatcher,
         positions: IPositionsDispatcher,
-        limit_orders: LegacyMap<PoolKey, List<LimitOrderInfo>>,
+        limit_orders: LegacyMap<ContractAddress, List<u64>>,
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, core: ICoreDispatcher, positions: IPositionsDispatcher) {
-        self.core.write(core);
-        self.positions.write(positions);
-    }
-
-    #[generate_trait]
-    impl Internal of InternalTrait {
-        fn check_caller_is_core(self: @ContractState) -> ICoreDispatcher {
-            let core = self.core.read();
-            assert(core.contract_address == get_caller_address(), 'CALLER_NOT_CORE');
-            core
-        }
+    fn constructor(ref self: ContractState, core: ContractAddress, positions: ContractAddress) {
+        self.core.write(ICoreDispatcher { contract_address: core });
+        self.positions.write(IPositionsDispatcher { contract_address: positions });
     }
 
     #[abi(embed_v0)]
-    impl EkuboLimitOrderImpl of ILimitOrder<ContractState> {
-        fn set_limit_order(self: @ContractState, pool_key: PoolKey, tick: i129, amount: u128) {
+    impl EkuboLimitOrderImpl of IEkuboLimitOrder<ContractState> {
+        fn get_limit_orders(self: @ContractState) -> Array<u64> {
+            self.limit_orders.read(get_caller_address()).array().unwrap()
+        }
+
+        fn set_limit_order(ref self: ContractState, pool_key: PoolKey, bounds: Bounds, min_liquidity: u128) {
+            let (position_id, _liquidity) = self.positions.read().mint_and_deposit(pool_key, bounds, min_liquidity);
+            
+            let mut limit_orders = self.limit_orders.read(get_caller_address());
+            limit_orders.append(position_id);
         }
     }
 
@@ -62,7 +60,7 @@ mod LimitOrder {
         fn before_initialize_pool(
             ref self: ContractState, caller: ContractAddress, pool_key: PoolKey, initial_tick: i129
         ) -> CallPoints {
-            self.check_caller_is_core();
+            assert(self.core.read().contract_address == get_caller_address(), 'CALLER_NOT_CORE');
 
             CallPoints {
                 after_initialize_pool: false,

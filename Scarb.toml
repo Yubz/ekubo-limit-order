@@ -12,8 +12,7 @@ ekubo = { git = "https://github.com/EkuboProtocol/abis.git" }
 alexandria_storage = { git = "https://github.com/keep-starknet-strange/alexandria.git" }
 
 [[target.starknet-contract]]
-allowed-libfuncs-list.name = "audited"
-casm = true
+allowed-libfuncs-list.name = "experimental"
 
 [lib]
-allowed-libfuncs-list.name = "audited"
+allowed-libfuncs-list.name = "experimental"
