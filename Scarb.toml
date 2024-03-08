@@ -10,8 +10,11 @@ edition = "2023_11"
 starknet = "=2.5.3"
 ekubo = { git = "https://github.com/EkuboProtocol/abis.git" }
 alexandria_storage = { git = "https://github.com/keep-starknet-strange/alexandria.git" }
+openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v0.9.0"}
 
 [[target.starknet-contract]]
+sierra = true
+casm = true
 allowed-libfuncs-list.name = "experimental"
 
 [lib]

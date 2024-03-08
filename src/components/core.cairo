@@ -5,7 +5,6 @@ use ekubo::types::bounds::{Bounds};
 use ekubo::types::i129::{i129};
 use core::traits::{TryInto, Into};
 use core::option::{OptionTrait};
-use starknet::ContractAddress;
 use alexandria_storage::list::{List, ListTrait};
 
 #[starknet::interface]
@@ -19,24 +18,63 @@ trait IEkuboLimitOrder<TContractState> {
 
 #[starknet::contract]
 mod LimitOrder {
-    use core::result::ResultTrait;
+    use ekubo_limit_order::interfaces::erc20::IERC20DispatcherTrait;
+use core::result::ResultTrait;
     use super::{IEkuboLimitOrder, PositionKey, PoolKey, i129, TryInto, Into, List, ListTrait, Bounds};
     use core::array::{Array, ArrayTrait};
     use ekubo::types::call_points::{CallPoints};
     use ekubo::types::delta::{Delta};
     use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait, IExtension, SwapParameters, UpdatePositionParameters};
     use ekubo::interfaces::positions::{IPositionsDispatcher, IPositionsDispatcherTrait};
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
+    use starknet::{ContractAddress, ClassHash, get_caller_address, get_contract_address};
+    use ekubo_limit_order::interfaces::erc20::{IERC20, IERC20Dispatcher};
+    use openzeppelin::{
+        access::ownable::OwnableComponent,
+        upgrades::{UpgradeableComponent, interface::IUpgradeable},
+        security::PausableComponent,
+    };
+
+    component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
+
+    /// Ownable
+    #[abi(embed_v0)]
+    impl OwnableImpl = OwnableComponent::OwnableImpl<ContractState>;
+    impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
+
+    /// Upgradeable
+    impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
+
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    enum Event {
+        SetLimitOrder: SetLimitOrder,
+        #[flat]
+        OwnableEvent: OwnableComponent::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct SetLimitOrder {
+        position_id: u64,
+        recipient_address: ContractAddress
+    }
     
     #[storage]
     struct Storage {
         core: ICoreDispatcher,
         positions: IPositionsDispatcher,
         limit_orders: LegacyMap<ContractAddress, List<u64>>,
+        #[substorage(v0)]
+        ownable: OwnableComponent::Storage,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, core: ContractAddress, positions: ContractAddress) {
+    fn constructor(ref self: ContractState, owner: ContractAddress, core: ContractAddress, positions: ContractAddress) {
+        self.ownable.initializer(owner);
         self.core.write(ICoreDispatcher { contract_address: core });
         self.positions.write(IPositionsDispatcher { contract_address: positions });
     }
@@ -48,6 +86,15 @@ mod LimitOrder {
         }
 
         fn set_limit_order(ref self: ContractState, pool_key: PoolKey, bounds: Bounds, min_liquidity: u128) {
+            assert(min_liquidity > 0, 'min_liquidity must be greater than 0');
+            
+            let dispatcher_0 = IERC20Dispatcher { contract_address: pool_key.token0 };
+
+            //assert(dispatcher_0.allowance(get_caller_address(), get_contract_address()) >= payment_amount, 'Not enough allowance');
+            //assert(dispatcher_0.balanceOf(get_caller_address()) >= payment_amount, 'Not enough balance');
+
+            self.core.read().maybe_initialize_pool(pool_key, bounds.upper);
+
             let (position_id, _liquidity) = self.positions.read().mint_and_deposit(pool_key, bounds, min_liquidity);
             
             let mut limit_orders = self.limit_orders.read(get_caller_address());
@@ -114,5 +161,21 @@ mod LimitOrder {
         ) {
             assert(false, 'NOT_USED');
         }
+    }
+
+    #[abi(embed_v0)]
+    impl UpgradeableImpl of IUpgradeable<ContractState> {
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
+            // This function can only be called by the owner
+            self.ownable.assert_only_owner();
+
+            // Replace the class hash upgrading the contract
+            self.upgradeable._upgrade(new_class_hash);
+        }
+    }
+
+    #[generate_trait]
+    impl InternalImpl of InternalTrait {
+
     }
 }
